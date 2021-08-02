@@ -28,9 +28,10 @@ if __name__ == "__main__":
             "setuptools_git",
             "setuptools_scm",
         ],
-        use_scm_version={
-            "write_to": os.path.join("backtesting", "_version.py"),
-        },
+        # use_scm_version={
+        #     "write_to": os.path.join("backtesting", "_version.py"),
+        # },
+        version = '0.1',    
         install_requires=[
             "numpy",
             "pandas >= 0.25.0, != 0.25.0",
