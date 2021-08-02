@@ -408,8 +408,22 @@ return this.labels[index] || "";
         source_key = "eq_return" if is_return else "equity"
         source.add(equity, source_key)
         fig = new_indicator_figure(
-            y_axis_label=yaxis_label, **({} if plot_drawdown else dict(plot_height=110))
+            y_axis_label=yaxis_label,
+            y_axis_type="log",
+            **({} if plot_drawdown else dict(plot_height=110)),
         )
+
+        # Equity Average
+        # source.add(equity.rolling(50).mean(), "equity_average")
+        # fig.line(
+        #     "index",
+        #     "equity_average",
+        #     source=source,
+        #     line_width=2,
+        #     line_alpha=1,
+        #     line_color="pink",
+        #     legend_label="Equity Average",
+        # )
 
         # High-watermark drawdown dents
         fig.patch(

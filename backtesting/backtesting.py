@@ -34,6 +34,7 @@ except ImportError:
 from ._plotting import plot
 from ._util import _as_str, _Indicator, _Data, _data_period, try_
 
+
 __pdoc__ = {
     "Strategy.__init__": False,
     "Order.__init__": False,
@@ -79,6 +80,9 @@ class Strategy(metaclass=ABCMeta):
                 )
             setattr(self, k, v)
         return params
+
+    def update_params(self, params):
+        self._params = self._check_params(params)
 
     def I(
         self,  # noqa: E741, E743
@@ -1312,6 +1316,148 @@ class Backtest:
             self._results = self._compute_stats(broker, strategy)
         return self._results
 
+    def validation_optimization(
+        self,
+        *,
+        maximize: Union[str, Callable[[pd.Series], float]] = "SQN",
+        method: str = "grid",
+        max_tries: Union[int, float] = None,
+        constraint: Callable[[dict], bool] = None,
+        validation_portion: float = 0.3,
+        **kwargs,
+    ) -> Union[
+        pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
+    ]:
+        # In Sample
+        [insample_optimization, optimizationParams] = self.optimize(
+            maximize=maximize,
+            method=method,
+            max_tries=max_tries,
+            constraint=constraint,
+            start_data_portion=0,
+            end_data_portion=1 - validation_portion,
+            **kwargs,
+        )
+
+        # Out Sample
+        datacopy = self._data.copy(deep=True)
+        self._data = self._data[int(len(self._data) * (1 - validation_portion)) :]
+        outsample_run = self.run(**optimizationParams)
+
+        # Restore Data
+        self._data = datacopy
+
+        # Correlation
+        outSampleLen = len(outsample_run["_equity_curve"])
+        samples_corr = np.corrcoef(
+            outsample_run["_equity_curve"]["Equity"],
+            insample_optimization[0]["_equity_curve"]["Equity"][-outSampleLen:],
+        )[1, 0]
+
+        return insample_optimization, outsample_run, samples_corr
+
+    # Walk-Forward Optimization
+    def walk_forward_optimization(
+        self,
+        *,
+        maximize: Union[str, Callable[[pd.Series], float]] = "SQN",
+        method: str = "grid",
+        max_tries: Union[int, float] = None,
+        constraint: Callable[[dict], bool] = None,
+        division_size: int = 5,
+        **kwargs,
+    ) -> Union[
+        pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
+    ]:
+        data = _Data(self._data.copy(deep=False))
+        broker: _Broker = self._broker(data=data)
+        strategy: Strategy = self._strategy(broker, data, dict([]))
+
+        strategy.init()
+        data._update()  # Strategy.init might have changed/added to data.df
+
+        # Indicators used in Strategy.next()
+        indicator_attrs = {
+            attr: indicator
+            for attr, indicator in strategy.__dict__.items()
+            if isinstance(indicator, _Indicator)
+        }.items()
+
+        # Skip first few candles where indicators are still "warming up"
+        # skip to initial out sample portion of data
+        # +1 to have at least two entries available
+        start = 1 + max(
+            max(
+                (
+                    np.isnan(indicator.astype(float)).argmin(axis=-1).max()
+                    for _, indicator in indicator_attrs
+                ),
+                default=0,
+            ),
+            int(len(self._data) * 0.3) - 1,
+        )
+
+        # Disable "invalid value encountered in ..." warnings. Comparison
+        # np.nan >= 3 is not invalid; it's False.
+        with np.errstate(invalid="ignore"):
+            splits = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            for i in range(start, len(self._data)):
+                for s in splits:
+                    if int(s * len(self._data)) == i:
+                        Optimize = self.optimize(
+                            maximize=maximize,
+                            method=method,
+                            max_tries=max_tries,
+                            constraint=constraint,
+                            start_data_portion=s - (0.3),
+                            end_data_portion=s,
+                            **kwargs,
+                        )
+                        strategy.update_params(Optimize[1])
+                        strategy.init()
+
+                # Prepare data and indicators for `next` call
+                data._set_length(i + 1)
+                for attr, indicator in indicator_attrs:
+                    # Slice indicator on the last dimension (case of 2d indicator)
+                    setattr(strategy, attr, indicator[..., : i + 1])
+
+                # Handle orders processing and broker stuff
+                try:
+                    broker.next()
+                except _OutOfMoneyError:
+                    break
+
+                # Next tick, a moment before bar close
+                strategy.next()
+            else:
+                # Close any remaining open trades so they produce some stats
+                for trade in broker.trades:
+                    trade.close()
+
+                # Re-run broker one last time to handle orders placed in the last strategy
+                # iteration. Use the same OHLC values as in the last broker iteration.
+                if start < len(self._data):
+                    try_(broker.next, exception=_OutOfMoneyError)
+
+            # Set data back to full length
+            # for future `indicator._opts['data'].index` calls to work
+            data._set_length(len(self._data))
+
+            # Final Optimization
+            FinalOptimize = self.optimize(
+                maximize=maximize,
+                method=method,
+                max_tries=max_tries,
+                constraint=constraint,
+                start_data_portion=1 - (0.3),
+                end_data_portion=1,
+                **kwargs,
+            )
+
+            self._results = self._compute_stats(broker, strategy)
+        return (self._results, FinalOptimize[1])
+
     def optimize(
         self,
         *,
@@ -1322,6 +1468,8 @@ class Backtest:
         return_heatmap: bool = False,
         return_optimization: bool = False,
         random_state: int = None,
+        start_data_portion=0,
+        end_data_portion=1,
         **kwargs,
     ) -> Union[
         pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
@@ -1345,6 +1493,10 @@ class Backtest:
 
         [model-based optimization]: \
             https://scikit-optimize.github.io/stable/auto_examples/bayesian-optimization.html
+        
+        * `"genetic"` which finds close-to-optimal strategy parameters using
+          genetic optimization.
+
 
         `max_tries` is the maximal number of strategy runs to perform.
         If `method="grid"`, this results in randomized grid search.
@@ -1393,6 +1545,14 @@ class Backtest:
         if not kwargs:
             raise ValueError("Need some strategy parameters to optimize")
 
+        # Custom Data Length
+        datacopy = self._data.copy(deep=True)
+        self._data = self._data[
+            int(len(self._data) * start_data_portion) : int(
+                len(self._data) * end_data_portion
+            )
+        ]
+
         maximize_key = None
         if isinstance(maximize, str):
             maximize_key = str(maximize)
@@ -1428,6 +1588,9 @@ class Backtest:
 
         if return_optimization and method != "skopt":
             raise ValueError("return_optimization=True only valid if method='skopt'")
+
+        if return_heatmap and method == "genetic":
+            raise ValueError("return_heatmap=True only valid if method!='genetic'")
 
         def _tuple(x):
             return x if isinstance(x, Sequence) and not isinstance(x, str) else (x,)
@@ -1547,8 +1710,8 @@ class Backtest:
                 stats = self.run(**dict(zip(heatmap.index.names, best_params)))
 
             if return_heatmap:
-                return stats, heatmap
-            return stats
+                return [stats, heatmap]
+            return [stats]
 
         def _optimize_skopt() -> Union[
             pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
@@ -1660,13 +1823,94 @@ class Backtest:
 
             return stats if len(output) == 1 else tuple(output)
 
+        def _optimize_genetic() -> Union[pd.Series]:
+            try:
+                from geneticalgorithm import geneticalgorithm
+            except ImportError:
+                raise ImportError(
+                    "Need package 'geneticalgorithm' for method='genetic'. "
+                    "pip install geneticalgorithm"
+                )
+
+            nonlocal max_tries
+            max_tries = (
+                200
+                if max_tries is None
+                else max(1, int(max_tries * _grid_size()))
+                if 0 < max_tries <= 1
+                else max_tries
+            )
+
+            dimensions = []
+            dimensionstype = []
+            for key, values in kwargs.items():
+                values = np.asarray(values)
+                dimensions.append([values.min(), values.max()])
+
+                if values.dtype.kind in "mM":  # timedelta, datetime64
+                    # these dtypes are unsupported in skopt, so convert to raw int
+                    # TODO: save dtype and convert back later
+                    values = values.astype(int)
+
+                if values.dtype.kind in "iumM":
+                    dimensionstype.append(["int"])
+                elif values.dtype.kind == "f":
+                    dimensions.append(["real"])
+                else:
+                    dimensions.append(["bool"])
+
+            def objective_function(params):
+                return -1 * self.run(**dict(zip(kwargs.keys(), params)))[maximize_key]
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    "GA is terminated due to the maximum number of iterations without improvement was met!",
+                )
+                algorithm_param = {
+                    "max_num_iteration": int(max_tries),
+                    "population_size": int(max_tries / 10),
+                    "mutation_probability": 0.1,
+                    "elit_ratio": 0.01,
+                    "crossover_probability": 0.5,
+                    "parents_portion": 0.3,
+                    "crossover_type": "uniform",
+                    "max_iteration_without_improv": int(max_tries / 4),
+                }
+
+                model = geneticalgorithm(
+                    function=objective_function,
+                    dimension=len(dimensions),
+                    variable_type_mixed=np.array(dimensionstype),
+                    variable_boundaries=np.array(dimensions),
+                    algorithm_parameters=algorithm_param,
+                    convergence_curve=False,
+                    progress_bar=True,
+                )
+
+                model.run()
+
+            stats = self.run(**dict(zip(kwargs.keys(), model.best_variable)))
+            output = [stats]
+
+            return stats if len(output) == 1 else tuple(output)
+
         if method == "grid":
             output = _optimize_grid()
         elif method == "skopt":
             output = _optimize_skopt()
+        elif method == "genetic":
+            output = _optimize_genetic()
         else:
-            raise ValueError(f"Method should be 'grid' or 'skopt', not {method!r}")
-        return output
+            raise ValueError(
+                f"Method should be 'grid' or 'skopt' or 'genetic', not {method!r}"
+            )
+
+        # Restore Data
+        self._data = datacopy
+        values = [getattr(output[0]._strategy, kwarg) for kwarg in kwargs.keys()]
+
+        return output, dict(zip(kwargs.keys(), values))
 
     @staticmethod
     def _mp_task(backtest_uuid, batch_index):
@@ -1700,7 +1944,12 @@ class Backtest:
         data = self._data
         index = data.index
 
-        equity = pd.Series(broker._equity).bfill().fillna(broker._cash).values
+        equity = (
+            pd.Series(broker._equity)
+            .bfill()
+            .fillna(broker._cash)
+            .values[: len(self._data)]
+        )
         dd = 1 - equity / np.maximum.accumulate(equity)
         dd_dur, dd_peaks = self._compute_drawdown_duration_peaks(
             pd.Series(dd, index=index)
@@ -1794,7 +2043,9 @@ class Backtest:
             * 100
         )  # noqa: E501
         # s.loc['Return (Ann.) [%]'] = gmean_day_return * annual_trading_days * 100
-        # s.loc['Risk (Ann.) [%]'] = day_returns.std(ddof=1) * np.sqrt(annual_trading_days) * 100
+        # s.loc["Risk (Ann.) [%]"] = (
+        #     day_returns.std(ddof=1) * np.sqrt(annual_trading_days) * 100
+        # )
 
         # Our Sharpe mismatches `empyrical.sharpe_ratio()` because they use arithmetic mean return
         # and simple standard deviation
@@ -1834,11 +2085,24 @@ class Backtest:
         s.loc["Profit Factor"] = returns[returns > 0].sum() / (
             abs(returns[returns < 0].sum()) or np.nan
         )  # noqa: E501
+        s.loc["Win/Loss Ratio"] = returns[returns > 0].mean() / (
+            abs(returns[returns < 0].mean()) or np.nan
+        )  # noqa: E501
         s.loc["Expectancy [%]"] = returns.mean() * 100
         s.loc["SQN"] = np.sqrt(n_trades) * pl.mean() / (pl.std() or np.nan)
-
         s.loc["_strategy"] = strategy
         s.loc["_equity_curve"] = equity_df
+        s.loc["_pnl_curve"] = (
+            pd.Series(broker._equity).dropna().drop_duplicates().values
+        )
+        s.loc["_average_curve"] = (
+            pd.Series(broker._equity)
+            .dropna()
+            .drop_duplicates()
+            .rolling(50)
+            .mean()
+            .values
+        )
         s.loc["_trades"] = trades_df
 
         s = Backtest._Stats(s)
