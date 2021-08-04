@@ -1453,9 +1453,11 @@ class Backtest:
                 end_data_portion=1,
                 **kwargs,
             )
+            strategy.update_params(FinalOptimize[1])
+            strategy.init()
 
             self._results = self._compute_stats(broker, strategy)
-        return (self._results, FinalOptimize[1])
+        return self._results
 
     # Cross-Validation Optimization
     def cross_validation_optimization(
@@ -1554,9 +1556,11 @@ class Backtest:
                 end_data_portion=1,
                 **kwargs,
             )
+            strategy.update_params(FinalOptimize[1])
+            strategy.init()
 
             self._results = self._compute_stats(broker, strategy)
-        return (self._results, FinalOptimize[1])
+        return self._results
 
     def optimize(
         self,

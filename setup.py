@@ -31,7 +31,7 @@ if __name__ == "__main__":
         # use_scm_version={
         #     "write_to": os.path.join("backtesting", "_version.py"),
         # },
-        version = '0.2.1',    
+        version="0.2.2",
         install_requires=[
             "numpy",
             "pandas >= 0.25.0, != 0.25.0",
