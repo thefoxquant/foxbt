@@ -1364,7 +1364,6 @@ class Backtest:
         method: str = "grid",
         max_tries: Union[int, float] = None,
         constraint: Callable[[dict], bool] = None,
-        division_size: int = 5,
         **kwargs,
     ) -> Union[
         pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
@@ -1451,6 +1450,107 @@ class Backtest:
                 max_tries=max_tries,
                 constraint=constraint,
                 start_data_portion=1 - (0.3),
+                end_data_portion=1,
+                **kwargs,
+            )
+
+            self._results = self._compute_stats(broker, strategy)
+        return (self._results, FinalOptimize[1])
+
+    # Cross-Validation Optimization
+    def corss_validation_optimization(
+        self,
+        *,
+        maximize: Union[str, Callable[[pd.Series], float]] = "SQN",
+        method: str = "grid",
+        max_tries: Union[int, float] = None,
+        constraint: Callable[[dict], bool] = None,
+        **kwargs,
+    ) -> Union[
+        pd.Series, Tuple[pd.Series, pd.Series], Tuple[pd.Series, pd.Series, dict]
+    ]:
+        data = _Data(self._data.copy(deep=False))
+        broker: _Broker = self._broker(data=data)
+        strategy: Strategy = self._strategy(broker, data, dict([]))
+
+        strategy.init()
+        data._update()  # Strategy.init might have changed/added to data.df
+
+        # Indicators used in Strategy.next()
+        indicator_attrs = {
+            attr: indicator
+            for attr, indicator in strategy.__dict__.items()
+            if isinstance(indicator, _Indicator)
+        }.items()
+
+        # Skip first few candles where indicators are still "warming up"
+        # skip to initial out sample portion of data
+        # +1 to have at least two entries available
+        start = 1 + max(
+            max(
+                (
+                    np.isnan(indicator.astype(float)).argmin(axis=-1).max()
+                    for _, indicator in indicator_attrs
+                ),
+                default=0,
+            ),
+            int(len(self._data) * 0.1) - 1,
+        )
+
+        # Disable "invalid value encountered in ..." warnings. Comparison
+        # np.nan >= 3 is not invalid; it's False.
+        with np.errstate(invalid="ignore"):
+            splits = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            for i in range(start, len(self._data)):
+                for s in splits:
+                    if int(s * len(self._data)) == i:
+                        Optimize = self.optimize(
+                            maximize=maximize,
+                            method=method,
+                            max_tries=max_tries,
+                            constraint=constraint,
+                            start_data_portion=0,
+                            end_data_portion=s,
+                            **kwargs,
+                        )
+                        strategy.update_params(Optimize[1])
+                        strategy.init()
+
+                # Prepare data and indicators for `next` call
+                data._set_length(i + 1)
+                for attr, indicator in indicator_attrs:
+                    # Slice indicator on the last dimension (case of 2d indicator)
+                    setattr(strategy, attr, indicator[..., : i + 1])
+
+                # Handle orders processing and broker stuff
+                try:
+                    broker.next()
+                except _OutOfMoneyError:
+                    break
+
+                # Next tick, a moment before bar close
+                strategy.next()
+            else:
+                # Close any remaining open trades so they produce some stats
+                for trade in broker.trades:
+                    trade.close()
+
+                # Re-run broker one last time to handle orders placed in the last strategy
+                # iteration. Use the same OHLC values as in the last broker iteration.
+                if start < len(self._data):
+                    try_(broker.next, exception=_OutOfMoneyError)
+
+            # Set data back to full length
+            # for future `indicator._opts['data'].index` calls to work
+            data._set_length(len(self._data))
+
+            # Final Optimization
+            FinalOptimize = self.optimize(
+                maximize=maximize,
+                method=method,
+                max_tries=max_tries,
+                constraint=constraint,
+                start_data_portion=0,
                 end_data_portion=1,
                 **kwargs,
             )
