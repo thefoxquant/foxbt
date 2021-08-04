@@ -1458,7 +1458,7 @@ class Backtest:
         return (self._results, FinalOptimize[1])
 
     # Cross-Validation Optimization
-    def corss_validation_optimization(
+    def cross_validation_optimization(
         self,
         *,
         maximize: Union[str, Callable[[pd.Series], float]] = "SQN",
