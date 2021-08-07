@@ -1260,15 +1260,19 @@ class Backtest:
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, kwargs)
 
-        strategy.init()
-        data._update()  # Strategy.init might have changed/added to data.df
+        def prepare_strategy():
+            strategy.init()
+            data._update()  # Strategy.init might have changed/added to data.df
+            # Indicators used in Strategy.next()
+            indicator_attrs = {
+                attr: indicator
+                for attr, indicator in strategy.__dict__.items()
+                if isinstance(indicator, _Indicator)
+            }.items()
 
-        # Indicators used in Strategy.next()
-        indicator_attrs = {
-            attr: indicator
-            for attr, indicator in strategy.__dict__.items()
-            if isinstance(indicator, _Indicator)
-        }.items()
+            return indicator_attrs
+
+        indicator_attrs = prepare_strategy()
 
         # Skip first few candles where indicators are still "warming up"
         # +1 to have at least two entries available
@@ -1372,15 +1376,19 @@ class Backtest:
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, dict([]))
 
-        strategy.init()
-        data._update()  # Strategy.init might have changed/added to data.df
+        def prepare_strategy():
+            strategy.init()
+            data._update()  # Strategy.init might have changed/added to data.df
+            # Indicators used in Strategy.next()
+            indicator_attrs = {
+                attr: indicator
+                for attr, indicator in strategy.__dict__.items()
+                if isinstance(indicator, _Indicator)
+            }.items()
 
-        # Indicators used in Strategy.next()
-        indicator_attrs = {
-            attr: indicator
-            for attr, indicator in strategy.__dict__.items()
-            if isinstance(indicator, _Indicator)
-        }.items()
+            return indicator_attrs
+
+        indicator_attrs = prepare_strategy()
 
         # Skip first few candles where indicators are still "warming up"
         # skip to initial out sample portion of data
@@ -1413,7 +1421,7 @@ class Backtest:
                             **kwargs,
                         )
                         strategy.update_params(Optimize[1])
-                        strategy.init()
+                        indicator_attrs = prepare_strategy()
 
                 # Prepare data and indicators for `next` call
                 data._set_length(i + 1)
@@ -1454,7 +1462,6 @@ class Backtest:
                 **kwargs,
             )
             strategy.update_params(FinalOptimize[1])
-            strategy.init()
 
             self._results = self._compute_stats(broker, strategy)
         return self._results
@@ -1475,15 +1482,19 @@ class Backtest:
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, dict([]))
 
-        strategy.init()
-        data._update()  # Strategy.init might have changed/added to data.df
+        def prepare_strategy():
+            strategy.init()
+            data._update()  # Strategy.init might have changed/added to data.df
+            # Indicators used in Strategy.next()
+            indicator_attrs = {
+                attr: indicator
+                for attr, indicator in strategy.__dict__.items()
+                if isinstance(indicator, _Indicator)
+            }.items()
 
-        # Indicators used in Strategy.next()
-        indicator_attrs = {
-            attr: indicator
-            for attr, indicator in strategy.__dict__.items()
-            if isinstance(indicator, _Indicator)
-        }.items()
+            return indicator_attrs
+
+        indicator_attrs = prepare_strategy()
 
         # Skip first few candles where indicators are still "warming up"
         # skip to initial out sample portion of data
@@ -1516,7 +1527,7 @@ class Backtest:
                             **kwargs,
                         )
                         strategy.update_params(Optimize[1])
-                        strategy.init()
+                        indicator_attrs = prepare_strategy()
 
                 # Prepare data and indicators for `next` call
                 data._set_length(i + 1)
@@ -1557,7 +1568,6 @@ class Backtest:
                 **kwargs,
             )
             strategy.update_params(FinalOptimize[1])
-            strategy.init()
 
             self._results = self._compute_stats(broker, strategy)
         return self._results
@@ -1824,7 +1834,7 @@ class Backtest:
                 from skopt import forest_minimize
                 from skopt.space import Integer, Real, Categorical
                 from skopt.utils import use_named_args
-                from skopt.callbacks import DeltaXStopper
+                from skopt.callbacks import EarlyStopper
                 from skopt.learning import ExtraTreesRegressor
             except ImportError:
                 raise ImportError(
@@ -1886,6 +1896,31 @@ class Backtest:
                     return INVALID
                 return value
 
+            class XYStopper(EarlyStopper):
+                def __init__(self):
+                    super(EarlyStopper, self).__init__()
+                    self.n_best = 5
+
+                def _criterion(self, result):
+                    # Y Check
+                    if len(result.func_vals) >= self.n_best:
+                        func_vals = np.sort(result.func_vals)
+                        worst = func_vals[self.n_best - 1]
+                        best = func_vals[0]
+
+                        return best / worst > 0.5
+                    # X Check
+                    if len(result.x_iters) >= 2:
+                        return (
+                            result.space.distance(
+                                result.x_iters[-2], result.x_iters[-1]
+                            )
+                            < 5
+                        )
+
+                    else:
+                        return None
+
             with warnings.catch_warnings():
                 warnings.filterwarnings(
                     "ignore", "The objective has been evaluated at this point before."
@@ -1902,7 +1937,7 @@ class Backtest:
                     kappa=3,
                     n_initial_points=min(max_tries, 20 + 3 * len(kwargs)),
                     initial_point_generator="lhs",  # 'sobel' requires n_initial_points ~ 2**N
-                    callback=DeltaXStopper(9e-7),
+                    callback=XYStopper(),
                     random_state=random_state,
                 )
 
