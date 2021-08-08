@@ -1261,6 +1261,7 @@ class Backtest:
         strategy: Strategy = self._strategy(broker, data, kwargs)
 
         def prepare_strategy():
+            data._set_length(len(self._data))
             strategy.init()
             data._update()  # Strategy.init might have changed/added to data.df
             # Indicators used in Strategy.next()
@@ -1377,6 +1378,7 @@ class Backtest:
         strategy: Strategy = self._strategy(broker, data, dict([]))
 
         def prepare_strategy():
+            data._set_length(len(self._data))
             strategy.init()
             data._update()  # Strategy.init might have changed/added to data.df
             # Indicators used in Strategy.next()
@@ -1483,6 +1485,7 @@ class Backtest:
         strategy: Strategy = self._strategy(broker, data, dict([]))
 
         def prepare_strategy():
+            data._set_length(len(self._data))
             strategy.init()
             data._update()  # Strategy.init might have changed/added to data.df
             # Indicators used in Strategy.next()
