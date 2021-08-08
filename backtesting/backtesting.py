@@ -1353,11 +1353,16 @@ class Backtest:
         self._data = datacopy
 
         # Correlation
-        outSampleLen = len(outsample_run["_equity_curve"])
-        samples_corr = np.corrcoef(
-            outsample_run["_equity_curve"]["Equity"],
-            insample_optimization[0]["_equity_curve"]["Equity"][-outSampleLen:],
-        )[1, 0]
+        insample_change = (
+            insample_optimization[0]["_equity_curve"]["Equity"].pct_change().fillna(0)
+        )
+        outsample_change = (
+            outsample_run["_equity_curve"]["Equity"].pct_change().fillna(0)
+        )
+        outSampleLen = len(outsample_change)
+        samples_corr = np.corrcoef(outsample_change, insample_change[-outSampleLen:])[
+            1, 0
+        ]
 
         return insample_optimization, outsample_run, samples_corr
 
