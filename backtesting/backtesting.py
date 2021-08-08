@@ -1354,10 +1354,10 @@ class Backtest:
 
         # Correlation
         insample_change = (
-            insample_optimization[0]["_equity_curve"]["Equity"].pct_change().fillna(0)
+            insample_optimization[0]["_equity_curve"]["Equity"].pct_change().cumsum().fillna(0)
         )
         outsample_change = (
-            outsample_run["_equity_curve"]["Equity"].pct_change().fillna(0)
+            outsample_run["_equity_curve"]["Equity"].pct_change().cumsum().fillna(0)
         )
         outSampleLen = len(outsample_change)
         samples_corr = np.corrcoef(outsample_change, insample_change[-outSampleLen:])[
