@@ -17,6 +17,7 @@ from itertools import repeat, product, chain, compress
 from math import copysign
 from numbers import Number
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+import copy
 
 import numpy as np
 import pandas as pd
@@ -1354,7 +1355,10 @@ class Backtest:
 
         # Correlation
         insample_change = (
-            insample_optimization[0]["_equity_curve"]["Equity"].pct_change().cumsum().fillna(0)
+            insample_optimization[0]["_equity_curve"]["Equity"]
+            .pct_change()
+            .cumsum()
+            .fillna(0)
         )
         outsample_change = (
             outsample_run["_equity_curve"]["Equity"].pct_change().cumsum().fillna(0)
@@ -1714,6 +1718,9 @@ class Backtest:
         if return_heatmap and method == "genetic":
             raise ValueError("return_heatmap=True only valid if method!='genetic'")
 
+        if not return_heatmap and method == "robust":
+            raise ValueError("return_heatmap must be true for 'robust' method")
+
         def _tuple(x):
             return x if isinstance(x, Sequence) and not isinstance(x, str) else (x,)
 
@@ -2042,15 +2049,53 @@ class Backtest:
 
             return stats if len(output) == 1 else tuple(output)
 
+        def _optimize_robust() -> Union[pd.Series, Tuple[pd.Series, pd.Series]]:
+            # Robust Values
+            def find_robust(heatmap):
+                heatmap_items = []
+                for item in heatmap.items():
+                    heatmap_items.append([item[0], item[1]])
+
+                avg_groups = []
+                for i in range(1, len(heatmap_items) - 1):
+                    avg_groups.append(
+                        [
+                            np.mean(
+                                [
+                                    heatmap_items[i - 1][1],
+                                    heatmap_items[i][1],
+                                    heatmap_items[i + 1][1],
+                                ]
+                            ),
+                            i,
+                        ]
+                    )
+                robust_item = heatmap_items[max(avg_groups)[1]][0][0]
+                return robust_item
+
+            robust_values = {}
+            for key, values in kwargs.items():
+                kwarg = {key: values}
+                [_, heatmap], _ = self.optimize(
+                    **kwarg, method="grid", return_heatmap=True
+                )
+                robust_item = find_robust(heatmap)
+                robust_values[key] = robust_item
+
+            output = self.run(**robust_values)
+            return [output]
+
         if method == "grid":
             output = _optimize_grid()
         elif method == "skopt":
             output = _optimize_skopt()
         elif method == "genetic":
             output = _optimize_genetic()
+        elif method == "robust":
+            output = _optimize_robust()
         else:
             raise ValueError(
-                f"Method should be 'grid' or 'skopt' or 'genetic', not {method!r}"
+                f"Method should be 'grid' or 'skopt' or 'genetic' or 'robust', not {method!r}"
             )
 
         # Restore Data
