@@ -1975,7 +1975,7 @@ class Backtest:
                 res.func_vals = res.func_vals[valid]
                 output.append(res)
 
-            return stats if len(output) == 1 else tuple(output)
+            return output
 
         def _optimize_genetic() -> Union[pd.Series]:
             try:
@@ -2047,7 +2047,7 @@ class Backtest:
             stats = self.run(**dict(zip(kwargs.keys(), model.best_variable)))
             output = [stats]
 
-            return stats if len(output) == 1 else tuple(output)
+            return output
 
         def _optimize_robust() -> Union[pd.Series, Tuple[pd.Series, pd.Series]]:
             # Robust Values
@@ -2284,17 +2284,7 @@ class Backtest:
         s.loc["SQN"] = np.sqrt(n_trades) * pl.mean() / (pl.std() or np.nan)
         s.loc["_strategy"] = strategy
         s.loc["_equity_curve"] = equity_df
-        s.loc["_pnl_curve"] = (
-            pd.Series(broker._equity).dropna().drop_duplicates().values
-        )
-        s.loc["_average_curve"] = (
-            pd.Series(broker._equity)
-            .dropna()
-            .drop_duplicates()
-            .rolling(50)
-            .mean()
-            .values
-        )
+
         s.loc["_trades"] = trades_df
 
         s = Backtest._Stats(s)
