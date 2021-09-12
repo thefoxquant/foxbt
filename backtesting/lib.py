@@ -27,31 +27,35 @@ from ._util import _Array, _as_str
 __pdoc__ = {}
 
 
-OHLCV_AGG = OrderedDict((
-    ('Open', 'first'),
-    ('High', 'max'),
-    ('Low', 'min'),
-    ('Close', 'last'),
-    ('Volume', 'sum'),
-))
+OHLCV_AGG = OrderedDict(
+    (
+        ("Open", "first"),
+        ("High", "max"),
+        ("Low", "min"),
+        ("Close", "last"),
+        ("Volume", "sum"),
+    )
+)
 """Dictionary of rules for aggregating resampled OHLCV data frames,
 e.g.
 
     df.resample('4H', label='right').agg(OHLCV_AGG)
 """
 
-TRADES_AGG = OrderedDict((
-    ('Size', 'sum'),
-    ('EntryBar', 'first'),
-    ('ExitBar', 'last'),
-    ('EntryPrice', 'mean'),
-    ('ExitPrice', 'mean'),
-    ('PnL', 'sum'),
-    ('ReturnPct', 'mean'),
-    ('EntryTime', 'first'),
-    ('ExitTime', 'last'),
-    ('Duration', 'sum'),
-))
+TRADES_AGG = OrderedDict(
+    (
+        ("Size", "sum"),
+        ("EntryBar", "first"),
+        ("ExitBar", "last"),
+        ("EntryPrice", "mean"),
+        ("ExitPrice", "mean"),
+        ("PnL", "sum"),
+        ("ReturnPct", "mean"),
+        ("EntryTime", "first"),
+        ("ExitTime", "last"),
+        ("Duration", "sum"),
+    )
+)
 """Dictionary of rules for aggregating resampled trades data,
 e.g.
 
@@ -60,9 +64,9 @@ e.g.
 """
 
 _EQUITY_AGG = {
-    'Equity': 'last',
-    'DrawdownPct': 'max',
-    'DrawdownDuration': 'max',
+    "Equity": "last",
+    "DrawdownPct": "max",
+    "DrawdownDuration": "max",
 }
 
 
@@ -98,26 +102,34 @@ def crossover(series1: Sequence, series2: Sequence) -> bool:
         True
     """
     series1 = (
-        series1.values if isinstance(series1, pd.Series) else
-        (series1, series1) if isinstance(series1, Number) else
-        series1)
+        series1.values
+        if isinstance(series1, pd.Series)
+        else (series1, series1)
+        if isinstance(series1, Number)
+        else series1
+    )
     series2 = (
-        series2.values if isinstance(series2, pd.Series) else
-        (series2, series2) if isinstance(series2, Number) else
-        series2)
+        series2.values
+        if isinstance(series2, pd.Series)
+        else (series2, series2)
+        if isinstance(series2, Number)
+        else series2
+    )
     try:
         return series1[-2] < series2[-2] and series1[-1] > series2[-1]
     except IndexError:
         return False
 
 
-def plot_heatmaps(heatmap: pd.Series,
-                  agg: Union[str, Callable] = 'max',
-                  *,
-                  ncols: int = 3,
-                  plot_width: int = 1200,
-                  filename: str = '',
-                  open_browser: bool = True):
+def plot_heatmaps(
+    heatmap: pd.Series,
+    agg: Union[str, Callable] = "max",
+    *,
+    ncols: int = 3,
+    plot_width: int = 1200,
+    filename: str = "",
+    open_browser: bool = True,
+):
     """
     Plots a grid of heatmaps, one for every pair of parameters in `heatmap`.
 
@@ -164,12 +176,14 @@ def quantile(series: Sequence, quantile: Union[None, float] = None):
     return np.nanpercentile(series, quantile * 100)
 
 
-def resample_apply(rule: str,
-                   func: Optional[Callable[..., Sequence]],
-                   series: Union[pd.Series, pd.DataFrame, _Array],
-                   *args,
-                   agg: Union[str, dict] = None,
-                   **kwargs):
+def resample_apply(
+    rule: str,
+    func: Optional[Callable[..., Sequence]],
+    series_list: Union[list[pd.Series], list[pd.DataFrame], list[_Array]],
+    *args,
+    agg: Union[str, dict] = None,
+    **kwargs,
+):
     """
     Apply `func` (such as an indicator) to `series`, resampled to
     a time frame specified by `rule`. When called from inside
@@ -242,23 +256,29 @@ http://pandas.pydata.org/pandas-docs/stable/timeseries.html#offset-aliases
 
     """
     if func is None:
+
         def func(x, *_, **__):
             return x
 
-    if not isinstance(series, (pd.Series, pd.DataFrame)):
-        assert isinstance(series, _Array), \
-            'resample_apply() takes either a `pd.Series`, `pd.DataFrame`, ' \
-            'or a `Strategy.data.*` array'
-        series = series.s
+    resampled_list = []
+    for series in series_list:
+        if not isinstance(series, (pd.Series, pd.DataFrame)):
+            assert isinstance(series, _Array), (
+                "resample_apply() takes either a `pd.Series`, `pd.DataFrame`, "
+                "or a `Strategy.data.*` array"
+            )
+            series = series.s
 
-    if agg is None:
-        agg = OHLCV_AGG.get(getattr(series, 'name', None), 'last')
-        if isinstance(series, pd.DataFrame):
-            agg = {column: OHLCV_AGG.get(column, 'last')
-                   for column in series.columns}
+        if agg is None:
+            agg = OHLCV_AGG.get(getattr(series, "name", None), "last")
+            if isinstance(series, pd.DataFrame):
+                agg = {
+                    column: OHLCV_AGG.get(column, "last") for column in series.columns
+                }
 
-    resampled = series.resample(rule, label='right').agg(agg).dropna()
-    resampled.name = _as_str(series) + '[' + rule + ']'
+        resampled = series.resample(rule, label="right").agg(agg).dropna()
+        resampled.name = _as_str(series) + "[" + rule + "]"
+        resampled_list.append(resampled)
 
     # Check first few stack frames if we are being called from
     # inside Strategy.init, and if so, extract Strategy.I wrapper.
@@ -266,36 +286,40 @@ http://pandas.pydata.org/pandas-docs/stable/timeseries.html#offset-aliases
     while frame and level <= 3:
         frame = frame.f_back
         level += 1
-        if isinstance(frame.f_locals.get('self'), Strategy):  # type: ignore
-            strategy_I = frame.f_locals['self'].I             # type: ignore
+        if isinstance(frame.f_locals.get("self"), Strategy):  # type: ignore
+            strategy_I = frame.f_locals["self"].I  # type: ignore
             break
     else:
+
         def strategy_I(func, *args, **kwargs):
             return func(*args, **kwargs)
 
-    def wrap_func(resampled, *args, **kwargs):
-        result = func(resampled, *args, **kwargs)
+    def wrap_func(resampled_list, *args, **kwargs):
+        result = func(*resampled_list, *args, **kwargs)
         if not isinstance(result, pd.DataFrame) and not isinstance(result, pd.Series):
             result = np.asarray(result)
             if result.ndim == 1:
-                result = pd.Series(result, name=resampled.name)
+                result = pd.Series(result, name=resampled_list[0].name)
             elif result.ndim == 2:
                 result = pd.DataFrame(result.T)
         # Resample back to data index
         if not isinstance(result.index, pd.DatetimeIndex):
-            result.index = resampled.index
-        result = result.reindex(index=series.index.union(resampled.index),
-                                method='ffill').reindex(series.index)
+            result.index = range(len(resampled_list[0]))
+        result = result.reindex(
+            index=pd.Series(series_list[0]).index.union(range(len(resampled_list[0]))),
+            method="ffill",
+        ).reindex(pd.Series(series_list[0]).index)
         return result
 
     wrap_func.__name__ = func.__name__  # type: ignore
 
-    array = strategy_I(wrap_func, resampled, *args, **kwargs)
+    array = strategy_I(wrap_func, resampled_list, *args, **kwargs)
     return array
 
 
-def random_ohlc_data(example_data: pd.DataFrame, *,
-                     frac=1., random_state: int = None) -> pd.DataFrame:
+def random_ohlc_data(
+    example_data: pd.DataFrame, *, frac=1.0, random_state: int = None
+) -> pd.DataFrame:
     """
     OHLC data generator. The generated OHLC data has basic
     [descriptive statistics](https://en.wikipedia.org/wiki/Descriptive_statistics)
@@ -314,19 +338,22 @@ def random_ohlc_data(example_data: pd.DataFrame, *,
     >>> next(ohlc_generator)  # returns new random data
     ...
     """
+
     def shuffle(x):
         return x.sample(frac=frac, replace=frac > 1, random_state=random_state)
 
-    if len(example_data.columns.intersection({'Open', 'High', 'Low', 'Close'})) != 4:
-        raise ValueError("`data` must be a pandas.DataFrame with columns "
-                         "'Open', 'High', 'Low', 'Close'")
+    if len(example_data.columns.intersection({"Open", "High", "Low", "Close"})) != 4:
+        raise ValueError(
+            "`data` must be a pandas.DataFrame with columns "
+            "'Open', 'High', 'Low', 'Close'"
+        )
     while True:
         df = shuffle(example_data)
         df.index = example_data.index
         padding = df.Close - df.Open.shift(-1)
         gaps = shuffle(example_data.Open.shift(-1) - example_data.Close)
         deltas = (padding + gaps).shift(1).fillna(0).cumsum()
-        for key in ('Open', 'High', 'Low', 'Close'):
+        for key in ("Open", "High", "Low", "Close"):
             df[key] += deltas
         yield df
 
@@ -353,13 +380,17 @@ class SignalStrategy(Strategy):
     Remember to call `super().init()` and `super().next()` in your
     overridden methods.
     """
+
     __entry_signal = (0,)
     __exit_signal = (False,)
 
-    def set_signal(self, entry_size: Sequence[float],
-                   exit_portion: Sequence[float] = None,
-                   *,
-                   plot: bool = True):
+    def set_signal(
+        self,
+        entry_size: Sequence[float],
+        exit_portion: Sequence[float] = None,
+        *,
+        plot: bool = True,
+    ):
         """
         Set entry/exit signal vectors (arrays).
 
@@ -376,12 +407,22 @@ class SignalStrategy(Strategy):
         """
         self.__entry_signal = self.I(  # type: ignore
             lambda: pd.Series(entry_size, dtype=float).replace(0, np.nan),
-            name='entry size', plot=plot, overlay=False, scatter=True, color='black')
+            name="entry size",
+            plot=plot,
+            overlay=False,
+            scatter=True,
+            color="black",
+        )
 
         if exit_portion is not None:
             self.__exit_signal = self.I(  # type: ignore
                 lambda: pd.Series(exit_portion, dtype=float).replace(0, np.nan),
-                name='exit portion', plot=plot, overlay=False, scatter=True, color='black')
+                name="exit portion",
+                plot=plot,
+                overlay=False,
+                scatter=True,
+                color="black",
+            )
 
     def next(self):
         super().next()
@@ -415,7 +456,8 @@ class TrailingStrategy(Strategy):
     Remember to call `super().init()` and `super().next()` in your
     overridden methods.
     """
-    __n_atr = 6.
+
+    __n_atr = 6.0
     __atr = None
 
     def init(self):
@@ -427,7 +469,11 @@ class TrailingStrategy(Strategy):
         Set the lookback period for computing ATR. The default value
         of 100 ensures a _stable_ ATR.
         """
-        h, l, c_prev = self.data.High, self.data.Low, pd.Series(self.data.Close).shift(1)
+        h, l, c_prev = (
+            self.data.High,
+            self.data.Low,
+            pd.Series(self.data.Close).shift(1),
+        )
         tr = np.max([h - l, (c_prev - h).abs(), (c_prev - l).abs()], axis=0)
         atr = pd.Series(tr).rolling(periods).mean().bfill().values
         self.__atr = atr
@@ -442,28 +488,39 @@ class TrailingStrategy(Strategy):
     def next(self):
         super().next()
         # Can't use index=-1 because self.__atr is not an Indicator type
-        index = len(self.data)-1
+        index = len(self.data) - 1
         for trade in self.trades:
             if trade.is_long:
-                trade.sl = max(trade.sl or -np.inf,
-                               self.data.Close[index] - self.__atr[index] * self.__n_atr)
+                trade.sl = max(
+                    trade.sl or -np.inf,
+                    self.data.Close[index] - self.__atr[index] * self.__n_atr,
+                )
             else:
-                trade.sl = min(trade.sl or np.inf,
-                               self.data.Close[index] + self.__atr[index] * self.__n_atr)
+                trade.sl = min(
+                    trade.sl or np.inf,
+                    self.data.Close[index] + self.__atr[index] * self.__n_atr,
+                )
 
 
 # Prevent pdoc3 documenting __init__ signature of Strategy subclasses
 for cls in list(globals().values()):
     if isinstance(cls, type) and issubclass(cls, Strategy):
-        __pdoc__[f'{cls.__name__}.__init__'] = False
+        __pdoc__[f"{cls.__name__}.__init__"] = False
 
 
 # NOTE: Don't put anything below this __all__ list
 
-__all__ = [getattr(v, '__name__', k)
-           for k, v in globals().items()                        # export
-           if ((callable(v) and v.__module__ == __name__ or     # callables from this module
-                k.isupper()) and                                # or CONSTANTS
-               not getattr(v, '__name__', k).startswith('_'))]  # neither marked internal
+__all__ = [
+    getattr(v, "__name__", k)
+    for k, v in globals().items()  # export
+    if (
+        (
+            callable(v)
+            and v.__module__ == __name__
+            or k.isupper()  # callables from this module
+        )
+        and not getattr(v, "__name__", k).startswith("_")  # or CONSTANTS
+    )
+]  # neither marked internal
 
 # NOTE: Don't put anything below here. See above.
